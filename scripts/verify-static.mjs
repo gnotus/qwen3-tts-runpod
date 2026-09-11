@@ -10,6 +10,7 @@ const assertions = [
   [start.includes("Qwen/Qwen3-TTS-12Hz-1.7B-Base"), "Base model is not pinned"],
   [start.includes("qwen3_tts.yaml"), "official deploy config is not used"],
   [start.includes("--task-type Base"), "Base task is not explicit"],
+  [start.indexOf("python -m uvicorn") < start.indexOf("DEPLOY_CONFIG="), "liveness gateway must start before vLLM import"],
   [gateway.includes('@app.get("/ping")'), "RunPod health route is missing"],
   [gateway.includes('@app.get("/ready")'), "model readiness route is missing"],
   [gateway.includes('{"status": "starting", "ready": False}'), "liveness route does not stay healthy during model loading"],
