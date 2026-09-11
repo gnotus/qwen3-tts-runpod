@@ -5,7 +5,9 @@ MODEL="${MODEL:-Qwen/Qwen3-TTS-12Hz-1.7B-Base}"
 PUBLIC_PORT="${PORT:-8000}"
 VLLM_PORT="${VLLM_PORT:-8091}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-DEPLOY_CONFIG="$(python -c 'from pathlib import Path; import vllm_omni; print(Path(vllm_omni.__file__).resolve().parent / "deploy" / "qwen3_tts.yaml")')"
+# Importing vllm_omni installs runtime patches and writes informational messages
+# to stdout. Keep only the final line containing the actual config path.
+DEPLOY_CONFIG="$(python -c 'from pathlib import Path; import vllm_omni; print(Path(vllm_omni.__file__).resolve().parent / "deploy" / "qwen3_tts.yaml")' | tail -n 1)"
 
 export VLLM_BACKEND_URL="http://127.0.0.1:${VLLM_PORT}"
 

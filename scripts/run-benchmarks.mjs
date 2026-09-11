@@ -7,7 +7,9 @@ const endpointId = "vllm-7lg4mza88egpuc";
 const apiBase = `https://${endpointId}.api.runpod.ai`;
 const model = "Qwen/Qwen3-TTS-12Hz-1.7B-Base";
 const gpuHourlyUsd = 1.58;
-const createdAt = "2026-09-11T09:17:59.236Z";
+// Version 1 spent 40 minutes in RunPod's free image-provisioning state and
+// never started the container. Version 2 pins the same amd64 image explicitly.
+const createdAt = "2026-09-11T10:01:18.530Z";
 const referencePath =
   process.env.QWEN_TTS_REFERENCE ||
   "/Users/gnotus/Documents/speech-to-speech/demo/pocket-tts-eval-2026-09-10/pocket-portuguese-aura-alba-matched.wav";
