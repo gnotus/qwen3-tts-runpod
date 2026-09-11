@@ -24,7 +24,7 @@ Scope: deploy and verify one-GPU, one-worker Qwen3-TTS Base serving for low-late
   EXPECT: cold start evidence verified
   EVIDENCE: exit=0; shell=/bin/sh; cwd=/Users/gnotus/Documents/gnotus.ai/runpod/qwen3-tts-vllm; path=09f74b907d5b/36 entries; EXPECT=matched; output-sha256=3abf23c29370c99517f8baad8993b31b8ef8514b5c87767d3850d08b1801f1d3; output-bytes=29
 
-- [x] G4: the Aura streaming request returns playable 24 kHz audio and records time to first audio byte
+- [x] G4: the Antonio Spanish streaming request returns playable 24 kHz audio and records time to first audio byte
   CHECK: node scripts/verify-results.mjs streaming
   EXPECT: streaming evidence verified
   EVIDENCE: exit=0; shell=/bin/sh; cwd=/Users/gnotus/Documents/gnotus.ai/runpod/qwen3-tts-vllm; path=09f74b907d5b/36 entries; EXPECT=matched; output-sha256=412ccf547c650b44c816a1ed66b95245e9b5ad69bcd2c23a6e57b71976d0b7f5; output-bytes=28

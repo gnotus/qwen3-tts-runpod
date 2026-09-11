@@ -37,6 +37,9 @@ GET  /ready
 GET  /v1/models
 ```
 
-Base voice-clone requests use `task_type: "Base"`, `ref_audio`, and `ref_text`.
+Base voice-clone requests use `task_type: "Base"` and `ref_audio`. Antonio's
+audiobook reference uses `x_vector_only_mode: true` without `ref_text`, matching
+the project's speaker-embedding workflow. ICL cloning can instead supply the
+exact reference transcript through `ref_text`.
 HTTP streaming additionally uses `stream: true`, `stream_format: "audio"`, and
 `response_format: "pcm"`.

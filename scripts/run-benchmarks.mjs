@@ -12,12 +12,10 @@ const gpuHourlyUsd = 1.58;
 const createdAt = process.env.RUNPOD_RELEASE_CREATED_AT || "2026-09-11T10:04:57.334Z";
 const referencePath =
   process.env.QWEN_TTS_REFERENCE ||
-  "/Users/gnotus/Documents/speech-to-speech/demo/pocket-tts-eval-2026-09-10/pocket-portuguese-aura-alba-matched.wav";
-const referenceText =
-  "Bom dia! Eu sou a Aura e estou aqui para ajudar você a começar o dia com clareza, calma e confiança.";
+  "/Users/gnotus/Documents/FADITECH/antoniocordeiroapp/tts/es/reference_voice/reference_spanish_9s.wav";
 const audiobookSource =
   process.env.QWEN_TTS_AUDIOBOOK_TEXT ||
-  "/Users/gnotus/Documents/FADITECH/antoniocordeiroapp/tts/es/02_introduccion/01_introduccion.txt";
+  "/Users/gnotus/Documents/FADITECH/antoniocordeiroapp/tts/es/02_introduccion/q_01_introduccion.txt";
 
 function loadEnv(file) {
   if (!fs.existsSync(file)) return {};
@@ -41,7 +39,7 @@ if (!apiKey?.startsWith("rpa_")) {
 
 const outputDir = path.join(root, "outputs");
 const evidenceDir = path.join(root, "evidence");
-const evidencePath = path.join(evidenceDir, "session.json");
+const evidencePath = path.join(evidenceDir, "antonio-session.json");
 fs.mkdirSync(outputDir, { recursive: true });
 fs.mkdirSync(evidenceDir, { recursive: true });
 
@@ -55,12 +53,12 @@ function basePayload(input, responseFormat = "wav") {
   return {
     model,
     input,
-    voice: "aura-reference",
+    voice: "antonio-reference",
     response_format: responseFormat,
     task_type: "Base",
     language: "Auto",
     ref_audio: `data:audio/wav;base64,${audio}`,
-    ref_text: referenceText,
+    x_vector_only_mode: true,
   };
 }
 
@@ -148,7 +146,7 @@ async function waitForColdStart() {
 async function runStreaming() {
   const started = performance.now();
   const payload = {
-    ...basePayload("Olá! Eu sou a Aura. Como posso ajudar você hoje?", "pcm"),
+    ...basePayload("Este libro es una invitación a vivir con más ligereza, claridad y propósito.", "pcm"),
     stream: true,
     stream_format: "audio",
     initial_codec_chunk_frames: 2,
@@ -168,7 +166,7 @@ async function runStreaming() {
   if (ttfaMs === undefined) throw new Error("stream returned no audio bytes");
   const pcm = Buffer.concat(chunks);
   const wav = pcmToWav(pcm);
-  const relative = "outputs/aura-stream.wav";
+  const relative = "outputs/antonio-stream-spanish.wav";
   fs.writeFileSync(path.join(root, relative), wav);
   const totalSeconds = (performance.now() - started) / 1000;
   writeEvidence({
@@ -200,7 +198,7 @@ async function runAudiobook() {
   const requestSeconds = (performance.now() - started) / 1000;
   const audioSeconds = wavSeconds(wav);
   const rtf = requestSeconds / audioSeconds;
-  const relative = "outputs/audiobook-spanish.wav";
+  const relative = "outputs/antonio-audiobook-spanish.wav";
   fs.writeFileSync(path.join(root, relative), wav);
   writeEvidence({
     audiobook: {
@@ -221,21 +219,21 @@ async function runAudiobook() {
 
 async function oneConcurrent(index) {
   const texts = [
-    "Sua consulta está confirmada para amanhã às dez horas.",
-    "Encontrei três horários disponíveis para esta semana.",
-    "Posso enviar um resumo desta conversa por mensagem.",
-    "Um momento, por favor. Estou verificando essa informação.",
-    "A sua solicitação foi recebida e já está sendo processada.",
-    "Vou consultar os dados e retorno com uma resposta em instantes.",
-    "Seu pagamento foi confirmado com sucesso. Obrigada pela preferência.",
-    "Posso ajudar com mais alguma informação antes de encerrarmos?",
-    "O atendimento está quase concluído. Só preciso confirmar um detalhe.",
-    "Tudo certo. O comprovante será enviado para o seu endereço de e-mail.",
+    "No necesitamos cambiar nuestras rutinas. Solo necesitamos cambiar el propósito con el que las vivimos.",
+    "Este es el inicio de la liberación y el principio de todo lo que aquí llamamos milagros.",
+    "Este libro es una guía práctica de transformación interior, escrita en un lenguaje claro y cercano.",
+    "No encontrarás aquí respuestas absolutas, sino preguntas honestas y prácticas espirituales sencillas.",
+    "Puedes leer y releer con calma ciertos pasajes, usando una práctica como ancla para la semana.",
+    "Por encima de todo, úsalo con ligereza. Este libro no es un deber, sino una invitación.",
+    "El perdón verdadero nos libera de las interpretaciones equivocadas y nos devuelve a la inocencia.",
+    "El Curso nos enseña a escuchar una voz interna que nos guía más allá del miedo y la separación.",
+    "La paz interior nace del perdón verdadero y del reconocimiento de nuestra unidad con la Fuente.",
+    "Una página, una palabra y una elección tras otra pueden cambiar nuestra forma de mirar el mundo.",
   ];
   const started = performance.now();
   const response = await checkedSpeech(basePayload(texts[index], "wav"));
   const wav = Buffer.from(await response.arrayBuffer());
-  const relative = `outputs/concurrent-${index + 1}.wav`;
+  const relative = `outputs/antonio-concurrent-${index + 1}.wav`;
   fs.writeFileSync(path.join(root, relative), wav);
   return {
     http_status: response.status,

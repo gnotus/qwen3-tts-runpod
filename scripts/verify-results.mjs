@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 
 const mode = process.argv[2];
 const root = path.resolve(import.meta.dirname, "..");
-const evidencePath = path.join(root, "evidence", "session.json");
+const evidencePath = path.join(root, "evidence", "antonio-session.json");
 
 if (!fs.existsSync(evidencePath)) throw new Error(`missing ${evidencePath}`);
 const evidence = JSON.parse(fs.readFileSync(evidencePath, "utf8"));

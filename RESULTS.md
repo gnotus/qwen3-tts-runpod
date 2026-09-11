@@ -1,5 +1,10 @@
 # RunPod Qwen3-TTS benchmark results
 
+> The first benchmark below used the wrong Aura Portuguese reference and is
+> retained only as invalid historical evidence. It must not be treated as an
+> Antonio audiobook result. Corrected Antonio/Spanish measurements will replace
+> these figures after the rerun.
+
 Measured on 2026-09-11 with `Qwen/Qwen3-TTS-12Hz-1.7B-Base`, vLLM-Omni
 `v0.28.0`, and one NVIDIA GeForce RTX 5090 (32 GB) at $1.58/GPU-hour.
 
