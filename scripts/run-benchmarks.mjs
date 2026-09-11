@@ -6,7 +6,7 @@ const root = path.resolve(import.meta.dirname, "..");
 const endpointId = "vllm-7lg4mza88egpuc";
 const apiBase = `https://${endpointId}.api.runpod.ai`;
 const model = "Qwen/Qwen3-TTS-12Hz-1.7B-Base";
-const gpuHourlyUsd = 1.58;
+const gpuHourlyUsd = Number(process.env.RUNPOD_GPU_HOURLY_USD || "1.10");
 // Version 1 spent 40 minutes in RunPod's free image-provisioning state and
 // never started the container. Version 2 pins the same amd64 image explicitly.
 const createdAt = process.env.RUNPOD_RELEASE_CREATED_AT || "2026-09-11T10:04:57.334Z";

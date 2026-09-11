@@ -31,9 +31,10 @@ function playable(relativePath, expectedSampleRate = 24000) {
 switch (mode) {
   case "endpoint":
     assert(evidence.endpoint?.type === "LOAD_BALANCER", "endpoint is not load balanced");
-    assert(evidence.endpoint?.workers_min === 0, "minimum workers must be zero after tests");
-    assert(evidence.endpoint?.workers_max === 1, "maximum workers must be one");
+    assert(evidence.endpoint?.workers_min_during_test === 1, "test did not keep exactly one warm worker");
+    assert(evidence.endpoint?.workers_max_during_test === 1, "test worker cap was not one");
     assert(evidence.endpoint?.gpu_count === 1, "GPU count must be one");
+    assert(evidence.endpoint?.final_workers_max === 0, "endpoint was not paused after testing");
     console.log("live endpoint limits verified");
     break;
   case "cold":
@@ -62,7 +63,7 @@ switch (mode) {
       "not all concurrent requests completed",
     );
     assert(evidence.concurrency?.maximum_live_workers === 1, "more than one worker was observed");
-    assert(evidence.endpoint?.workers_max === 1, "endpoint worker cap changed");
+    assert(evidence.endpoint?.workers_max_during_test === 1, "endpoint worker cap changed");
     for (const item of evidence.concurrency.outputs ?? []) playable(item.audio_path);
     console.log("single-worker concurrency evidence verified");
     break;
