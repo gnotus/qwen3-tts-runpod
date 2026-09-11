@@ -11,6 +11,8 @@ const assertions = [
   [start.includes("qwen3_tts.yaml"), "official deploy config is not used"],
   [start.includes("--task-type Base"), "Base task is not explicit"],
   [gateway.includes('@app.get("/ping")'), "RunPod health route is missing"],
+  [gateway.includes('@app.get("/ready")'), "model readiness route is missing"],
+  [gateway.includes('{"status": "starting", "ready": False}'), "liveness route does not stay healthy during model loading"],
   [gateway.includes("StreamingResponse"), "HTTP streaming proxy is missing"],
   [gateway.includes('@app.websocket("/{path:path}")'), "WebSocket proxy is missing"],
   [readme.includes("minimum 0, maximum 1"), "worker limits are not documented"],

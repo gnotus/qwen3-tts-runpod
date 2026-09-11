@@ -42,14 +42,26 @@ app = FastAPI(lifespan=lifespan)
 
 @app.get("/ping")
 async def ping(request: Request) -> Response:
-    """RunPod expects /ping; return 204 while vLLM is still loading."""
+    """RunPod liveness probe: the gateway is alive even while vLLM loads."""
     try:
         result = await request.app.state.client.get(f"{BACKEND_HTTP}/health", timeout=1.0)
     except httpx.HTTPError:
-        return Response(status_code=204)
+        return JSONResponse({"status": "starting", "ready": False})
     if result.status_code == 200:
-        return JSONResponse({"status": "healthy"})
-    return Response(status_code=204)
+        return JSONResponse({"status": "healthy", "ready": True})
+    return JSONResponse({"status": "starting", "ready": False})
+
+
+@app.get("/ready")
+async def ready(request: Request) -> Response:
+    """Readiness probe used by benchmarks and callers that need the model."""
+    try:
+        result = await request.app.state.client.get(f"{BACKEND_HTTP}/health", timeout=1.0)
+    except httpx.HTTPError:
+        return JSONResponse({"status": "starting", "ready": False}, status_code=503)
+    if result.status_code == 200:
+        return JSONResponse({"status": "healthy", "ready": True})
+    return JSONResponse({"status": "starting", "ready": False}, status_code=503)
 
 
 def filtered_headers(headers: httpx.Headers) -> dict[str, str]:

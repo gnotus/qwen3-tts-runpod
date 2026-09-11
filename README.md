@@ -2,8 +2,10 @@
 
 This deployment runs the official `vllm/vllm-omni:v0.28.0` image and the official
 single-GPU `qwen3_tts.yaml` recipe. A small gateway supplies RunPod's required
-`GET /ping` route and transparently proxies HTTP streaming and WebSockets to
-vLLM-Omni.
+`GET /ping` liveness route and transparently proxies HTTP streaming and
+WebSockets to vLLM-Omni. The liveness route stays HTTP 200 while the model is
+loading so RunPod does not create replacement workers; `GET /ready` reports
+when inference is actually ready.
 
 The intended RunPod configuration is:
 
@@ -31,6 +33,7 @@ The endpoint exposes vLLM-Omni's native API at:
 POST /v1/audio/speech
 WS   /v1/audio/speech/stream
 GET  /health
+GET  /ready
 GET  /v1/models
 ```
 

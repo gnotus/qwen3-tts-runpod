@@ -9,7 +9,7 @@ const model = "Qwen/Qwen3-TTS-12Hz-1.7B-Base";
 const gpuHourlyUsd = 1.58;
 // Version 1 spent 40 minutes in RunPod's free image-provisioning state and
 // never started the container. Version 2 pins the same amd64 image explicitly.
-const createdAt = "2026-09-11T10:01:18.530Z";
+const createdAt = process.env.RUNPOD_RELEASE_CREATED_AT || "2026-09-11T10:04:57.334Z";
 const referencePath =
   process.env.QWEN_TTS_REFERENCE ||
   "/Users/gnotus/Documents/speech-to-speech/demo/pocket-tts-eval-2026-09-10/pocket-portuguese-aura-alba-matched.wav";
@@ -124,7 +124,7 @@ async function waitForColdStart() {
   let lastStatus = 0;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${apiBase}/ping`, {
+      const response = await fetch(`${apiBase}/ready`, {
         headers: { Authorization: `Bearer ${apiKey}` },
         signal: AbortSignal.timeout(20_000),
       });
@@ -139,10 +139,10 @@ async function waitForColdStart() {
     } catch (error) {
       lastStatus = error.name === "TimeoutError" ? 408 : 0;
     }
-    console.log(`WAIT ping_status=${lastStatus}`);
+    console.log(`WAIT ready_status=${lastStatus}`);
     await new Promise((resolve) => setTimeout(resolve, 10_000));
   }
-  throw new Error(`endpoint did not become ready; last ping status ${lastStatus}`);
+  throw new Error(`endpoint did not become ready; last readiness status ${lastStatus}`);
 }
 
 async function runStreaming() {
@@ -225,6 +225,12 @@ async function oneConcurrent(index) {
     "Encontrei três horários disponíveis para esta semana.",
     "Posso enviar um resumo desta conversa por mensagem.",
     "Um momento, por favor. Estou verificando essa informação.",
+    "A sua solicitação foi recebida e já está sendo processada.",
+    "Vou consultar os dados e retorno com uma resposta em instantes.",
+    "Seu pagamento foi confirmado com sucesso. Obrigada pela preferência.",
+    "Posso ajudar com mais alguma informação antes de encerrarmos?",
+    "O atendimento está quase concluído. Só preciso confirmar um detalhe.",
+    "Tudo certo. O comprovante será enviado para o seu endereço de e-mail.",
   ];
   const started = performance.now();
   const response = await checkedSpeech(basePayload(texts[index], "wav"));
@@ -240,21 +246,36 @@ async function oneConcurrent(index) {
 }
 
 async function runConcurrency() {
+  const requestCount = Number.parseInt(process.env.QWEN_TTS_CONCURRENCY || "10", 10);
+  if (!Number.isInteger(requestCount) || requestCount < 1 || requestCount > 10) {
+    throw new Error("QWEN_TTS_CONCURRENCY must be an integer from 1 to 10");
+  }
   const started = performance.now();
-  const outputs = await Promise.all([0, 1, 2, 3].map(oneConcurrent));
+  const outputs = await Promise.all(Array.from({ length: requestCount }, (_, index) => oneConcurrent(index)));
   const wallSeconds = (performance.now() - started) / 1000;
   writeEvidence({
     concurrency: {
-      request_count: 4,
+      request_count: requestCount,
       completed: outputs.length,
-      maximum_live_workers: 1,
+      maximum_live_workers: null,
       wall_seconds: wallSeconds,
       estimated_batch_cost_usd: (wallSeconds / 3600) * gpuHourlyUsd,
       estimated_cost_per_request_usd: ((wallSeconds / 3600) * gpuHourlyUsd) / outputs.length,
       outputs,
     },
   });
-  console.log(`CONCURRENCY completed=4 wall=${wallSeconds.toFixed(3)}s`);
+  console.log(`CONCURRENCY completed=${outputs.length} wall=${wallSeconds.toFixed(3)}s`);
+}
+
+function recordObservedWorkers() {
+  const observed = Number.parseInt(process.env.RUNPOD_MAX_LIVE_WORKERS_OBSERVED || "", 10);
+  if (!Number.isInteger(observed) || observed < 0) {
+    throw new Error("RUNPOD_MAX_LIVE_WORKERS_OBSERVED is required for record-workers mode");
+  }
+  const evidence = readEvidence();
+  if (!evidence.concurrency) throw new Error("run concurrency before recording worker evidence");
+  writeEvidence({ concurrency: { ...evidence.concurrency, maximum_live_workers: observed } });
+  console.log(`WORKERS maximum_live_workers=${observed}`);
 }
 
 async function main() {
@@ -263,6 +284,7 @@ async function main() {
   if (["streaming", "all"].includes(mode)) await runStreaming();
   if (["audiobook", "all"].includes(mode)) await runAudiobook();
   if (["concurrency", "all"].includes(mode)) await runConcurrency();
+  if (mode === "record-workers") recordObservedWorkers();
 }
 
 await main();

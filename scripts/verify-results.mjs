@@ -56,8 +56,11 @@ switch (mode) {
     console.log("audiobook evidence verified");
     break;
   case "concurrency":
-    assert(evidence.concurrency?.request_count === 4, "expected four concurrent requests");
-    assert(evidence.concurrency?.completed === 4, "not all concurrent requests completed");
+    assert(evidence.concurrency?.request_count >= 4, "expected at least four concurrent requests");
+    assert(
+      evidence.concurrency?.completed === evidence.concurrency?.request_count,
+      "not all concurrent requests completed",
+    );
     assert(evidence.concurrency?.maximum_live_workers === 1, "more than one worker was observed");
     assert(evidence.endpoint?.workers_max === 1, "endpoint worker cap changed");
     for (const item of evidence.concurrency.outputs ?? []) playable(item.audio_path);
