@@ -130,10 +130,12 @@ async def run_selftest_when_ready(app: FastAPI) -> None:
         },
     ]
     try:
+        backend_ready_after_seconds: float | None = None
         while True:
             try:
                 response = await app.state.client.get(f"{BACKEND_HTTP}/health", timeout=1.0)
                 if response.status_code == 200:
+                    backend_ready_after_seconds = time.monotonic() - STARTED_MONOTONIC
                     break
             except httpx.HTTPError:
                 pass
@@ -180,7 +182,10 @@ async def run_selftest_when_ready(app: FastAPI) -> None:
                 if aggregate_audio_seconds
                 else None
             ),
-            "model_ready_after_seconds": round(time.monotonic() - STARTED_MONOTONIC, 3),
+            "model_ready_after_seconds": round(backend_ready_after_seconds, 3),
+            "selftest_completed_after_seconds": round(
+                time.monotonic() - STARTED_MONOTONIC, 3
+            ),
             "streams": streams,
             "failures": failures,
         }
