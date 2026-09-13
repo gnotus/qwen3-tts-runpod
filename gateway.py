@@ -27,6 +27,11 @@ SELFTEST_REFERENCE = Path(
     os.getenv("AURA_SELFTEST_REFERENCE", "/tmp/qwen3-tts/selftest_reference.wav")
 )
 SELFTEST_GPU_HOURLY_USD = float(os.getenv("AURA_SELFTEST_GPU_HOURLY_USD", "1.10"))
+SELFTEST_COUNTS = [
+    int(value)
+    for value in os.getenv("AURA_SELFTEST_COUNTS", "4").split(",")
+    if value.strip()
+]
 HOP_BY_HOP = {
     "connection",
     "keep-alive",
@@ -119,16 +124,71 @@ async def run_selftest_stream(
     }
 
 
-async def run_selftest_when_ready(app: FastAPI) -> None:
-    prompts = [
-        {"language": "English", "text": "Hello, I am Aura. How can I help you today?"},
-        {"language": "Spanish", "text": "Hola, soy Aura. ¿Cómo puedo ayudarte hoy?"},
-        {"language": "Portuguese", "text": "Olá, eu sou a Aura. Como posso ajudar você hoje?"},
-        {
-            "language": "English",
-            "text": "I found the information. Let me explain it clearly and briefly.",
-        },
+def percentile(values: list[float], fraction: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    index = max(0, min(len(ordered) - 1, int(len(ordered) * fraction + 0.999999) - 1))
+    return ordered[index]
+
+
+async def run_selftest_batch(
+    client: httpx.AsyncClient,
+    concurrency: int,
+    reference_audio: str,
+) -> dict[str, object]:
+    item = {
+        "language": "English",
+        "text": "Hello, I am Aura. How can I help you today?",
+    }
+    shared_start = time.monotonic()
+    settled = await asyncio.gather(
+        *(
+            run_selftest_stream(client, item, index, reference_audio, shared_start)
+            for index in range(concurrency)
+        ),
+        return_exceptions=True,
+    )
+    wall_seconds = time.monotonic() - shared_start
+    streams = [result for result in settled if isinstance(result, dict)]
+    failures = [
+        {"stream": index + 1, "error": str(result)}
+        for index, result in enumerate(settled)
+        if isinstance(result, BaseException)
     ]
+    aggregate_audio_seconds = sum(float(result["audio_seconds"]) for result in streams)
+    ttfas = [float(result["ttfa_seconds"]) for result in streams]
+    test_cost = wall_seconds / 3_600 * SELFTEST_GPU_HOURLY_USD
+    launch_offsets = [float(result["launch_offset_ms"]) for result in streams]
+    return {
+        "concurrency_requested": concurrency,
+        "completed": len(streams),
+        "failed": len(failures),
+        "launch_span_ms": round(max(launch_offsets) - min(launch_offsets), 3)
+        if launch_offsets
+        else None,
+        "wall_seconds": round(wall_seconds, 3),
+        "aggregate_audio_seconds": round(aggregate_audio_seconds, 3),
+        "aggregate_audio_realtime_multiple": (
+            round(aggregate_audio_seconds / wall_seconds, 3) if wall_seconds else None
+        ),
+        "ttfa_min_seconds": round(min(ttfas), 3) if ttfas else None,
+        "ttfa_p50_seconds": round(percentile(ttfas, 0.50), 3) if ttfas else None,
+        "ttfa_p95_seconds": round(percentile(ttfas, 0.95), 3) if ttfas else None,
+        "ttfa_max_seconds": round(max(ttfas), 3) if ttfas else None,
+        "gpu_hourly_usd": SELFTEST_GPU_HOURLY_USD,
+        "estimated_test_cost_usd": round(test_cost, 6),
+        "estimated_cost_per_generated_audio_hour_usd": (
+            round(test_cost / (aggregate_audio_seconds / 3_600), 3)
+            if aggregate_audio_seconds
+            else None
+        ),
+        "streams": streams,
+        "failures": failures,
+    }
+
+
+async def run_selftest_when_ready(app: FastAPI) -> None:
     try:
         backend_ready_after_seconds: float | None = None
         while True:
@@ -142,54 +202,24 @@ async def run_selftest_when_ready(app: FastAPI) -> None:
             await asyncio.sleep(1)
 
         reference_audio = base64.b64encode(SELFTEST_REFERENCE.read_bytes()).decode("ascii")
-        shared_start = time.monotonic()
-        settled = await asyncio.gather(
-            *(
-                run_selftest_stream(app.state.client, item, index, reference_audio, shared_start)
-                for index, item in enumerate(prompts)
-            ),
-            return_exceptions=True,
-        )
-        wall_seconds = time.monotonic() - shared_start
-        streams = [result for result in settled if isinstance(result, dict)]
-        failures = [
-            {
-                "stream": index + 1,
-                "language": prompts[index]["language"],
-                "error": str(result),
-            }
-            for index, result in enumerate(settled)
-            if isinstance(result, BaseException)
-        ]
-        aggregate_audio_seconds = sum(float(result["audio_seconds"]) for result in streams)
-        ttfas = sorted(float(result["ttfa_seconds"]) for result in streams)
-        test_cost = wall_seconds / 3_600 * SELFTEST_GPU_HOURLY_USD
+        warmup = await run_selftest_batch(app.state.client, 1, reference_audio)
+        print(f"AURA_LOADTEST_WARMUP {json.dumps(warmup, ensure_ascii=False)}", flush=True)
+        await asyncio.sleep(1)
+
+        profiles = []
+        for concurrency in SELFTEST_COUNTS:
+            profile = await run_selftest_batch(app.state.client, concurrency, reference_audio)
+            profiles.append(profile)
+            print(f"AURA_LOADTEST_RESULT {json.dumps(profile, ensure_ascii=False)}", flush=True)
+            await asyncio.sleep(1)
+
         result = {
-            "concurrency_requested": 4,
-            "completed": len(streams),
-            "failed": len(failures),
-            "wall_seconds": round(wall_seconds, 3),
-            "aggregate_audio_seconds": round(aggregate_audio_seconds, 3),
-            "aggregate_audio_realtime_multiple": (
-                round(aggregate_audio_seconds / wall_seconds, 3) if wall_seconds else None
-            ),
-            "ttfa_p50_seconds": ttfas[1] if len(ttfas) == 4 else None,
-            "ttfa_p95_seconds": ttfas[-1] if ttfas else None,
-            "gpu_hourly_usd": SELFTEST_GPU_HOURLY_USD,
-            "estimated_test_cost_usd": round(test_cost, 6),
-            "estimated_cost_per_generated_audio_hour_usd": (
-                round(test_cost / (aggregate_audio_seconds / 3_600), 3)
-                if aggregate_audio_seconds
-                else None
-            ),
+            "counts": SELFTEST_COUNTS,
             "model_ready_after_seconds": round(backend_ready_after_seconds, 3),
-            "selftest_completed_after_seconds": round(
-                time.monotonic() - STARTED_MONOTONIC, 3
-            ),
-            "streams": streams,
-            "failures": failures,
+            "loadtest_completed_after_seconds": round(time.monotonic() - STARTED_MONOTONIC, 3),
+            "profiles": profiles,
         }
-        print(f"AURA_SELFTEST_RESULT {json.dumps(result, ensure_ascii=False)}", flush=True)
+        print(f"AURA_LOADTEST_SUMMARY {json.dumps(result, ensure_ascii=False)}", flush=True)
     except BaseException as error:
         if isinstance(error, asyncio.CancelledError):
             raise
