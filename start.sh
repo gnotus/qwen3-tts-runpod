@@ -23,9 +23,9 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-# Importing vllm_omni installs runtime patches and writes informational messages
-# to stdout. Keep only the final line containing the actual config path.
-DEPLOY_CONFIG="$(python -c 'from pathlib import Path; import vllm_omni; print(Path(vllm_omni.__file__).resolve().parent / "deploy" / "qwen3_tts.yaml")' | tail -n 1)"
+# Locate the package without importing vllm_omni twice. The real import is left
+# to `vllm serve`, avoiding duplicate initialization on the startup path.
+DEPLOY_CONFIG="$(python -c 'from importlib.util import find_spec; from pathlib import Path; spec = find_spec("vllm_omni"); assert spec and spec.submodule_search_locations; print(Path(next(iter(spec.submodule_search_locations))) / "deploy" / "qwen3_tts.yaml")')"
 
 exec vllm serve "${MODEL}" \
   --omni \

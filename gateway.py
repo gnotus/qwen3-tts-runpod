@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
@@ -14,6 +16,9 @@ from starlette.responses import JSONResponse, StreamingResponse
 
 BACKEND_HTTP = os.getenv("VLLM_BACKEND_URL", "http://127.0.0.1:8091").rstrip("/")
 BACKEND_WS = BACKEND_HTTP.replace("http://", "ws://", 1).replace("https://", "wss://", 1)
+STARTED_AT = datetime.now(timezone.utc).isoformat()
+STARTED_MONOTONIC = time.monotonic()
+MODEL_READY_AFTER_SECONDS: float | None = None
 HOP_BY_HOP = {
     "connection",
     "keep-alive",
@@ -40,28 +45,45 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-@app.get("/ping")
-async def ping(request: Request) -> Response:
-    """RunPod liveness probe: the gateway is alive even while vLLM loads."""
+async def readiness_payload(request: Request) -> tuple[bool, dict[str, object]]:
+    """Return backend readiness plus boot timing measured inside the container."""
+    global MODEL_READY_AFTER_SECONDS
+
+    uptime = time.monotonic() - STARTED_MONOTONIC
     try:
         result = await request.app.state.client.get(f"{BACKEND_HTTP}/health", timeout=1.0)
+        is_ready = result.status_code == 200
     except httpx.HTTPError:
-        return JSONResponse({"status": "starting", "ready": False})
-    if result.status_code == 200:
-        return JSONResponse({"status": "healthy", "ready": True})
-    return JSONResponse({"status": "starting", "ready": False})
+        is_ready = False
+
+    if is_ready and MODEL_READY_AFTER_SECONDS is None:
+        MODEL_READY_AFTER_SECONDS = uptime
+
+    return is_ready, {
+        "status": "healthy" if is_ready else "starting",
+        "ready": is_ready,
+        "gateway_started_at": STARTED_AT,
+        "gateway_uptime_seconds": round(uptime, 3),
+        "model_ready_after_seconds": (
+            round(MODEL_READY_AFTER_SECONDS, 3) if MODEL_READY_AFTER_SECONDS is not None else None
+        ),
+    }
+
+
+@app.get("/ping")
+async def ping(request: Request) -> Response:
+    """RunPod probe: 204 means initializing; 200 means inference is ready."""
+    is_ready, payload = await readiness_payload(request)
+    if is_ready:
+        return JSONResponse(payload)
+    return Response(status_code=204)
 
 
 @app.get("/ready")
 async def ready(request: Request) -> Response:
     """Readiness probe used by benchmarks and callers that need the model."""
-    try:
-        result = await request.app.state.client.get(f"{BACKEND_HTTP}/health", timeout=1.0)
-    except httpx.HTTPError:
-        return JSONResponse({"status": "starting", "ready": False}, status_code=503)
-    if result.status_code == 200:
-        return JSONResponse({"status": "healthy", "ready": True})
-    return JSONResponse({"status": "starting", "ready": False}, status_code=503)
+    is_ready, payload = await readiness_payload(request)
+    return JSONResponse(payload, status_code=200 if is_ready else 503)
 
 
 def filtered_headers(headers: httpx.Headers) -> dict[str, str]:

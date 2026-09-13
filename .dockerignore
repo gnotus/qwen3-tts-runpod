@@ -1,0 +1,6 @@
+.git
+__pycache__
+evidence
+outputs
+*.wav
+*.json
