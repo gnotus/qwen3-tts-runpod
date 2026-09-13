@@ -32,6 +32,15 @@ SELFTEST_COUNTS = [
     for value in os.getenv("AURA_SELFTEST_COUNTS", "4").split(",")
     if value.strip()
 ]
+INITIAL_CODEC_CHUNK_FRAMES = int(os.getenv("AURA_INITIAL_CODEC_CHUNK_FRAMES", "1"))
+PRELOAD_VOICE = os.getenv("AURA_PRELOAD_VOICE", "0") == "1"
+PRELOAD_VOICE_NAME = os.getenv("AURA_PRELOAD_VOICE_NAME", "aura-reference")
+PRELOAD_VOICE_CONSENT = os.getenv(
+    "AURA_PRELOAD_VOICE_CONSENT", "aura-project-authorized-reference"
+)
+PRELOAD_VOICE_REFERENCE = Path(
+    os.getenv("AURA_PRELOAD_VOICE_REFERENCE", str(SELFTEST_REFERENCE))
+)
 HOP_BY_HOP = {
     "connection",
     "keep-alive",
@@ -49,6 +58,7 @@ HOP_BY_HOP = {
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.client = httpx.AsyncClient(timeout=None)
+    app.state.voice_preload_task = None
     selftest_task = (
         asyncio.create_task(run_selftest_when_ready(app)) if SELFTEST_ENABLED else None
     )
@@ -61,6 +71,61 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+async def preload_voice_and_warm(app: FastAPI) -> dict[str, object]:
+    """Register Aura once per worker and populate the speaker-feature cache."""
+    started = time.monotonic()
+    if not PRELOAD_VOICE_REFERENCE.exists():
+        raise FileNotFoundError(f"missing Aura reference: {PRELOAD_VOICE_REFERENCE}")
+
+    voices = await app.state.client.get(f"{BACKEND_HTTP}/v1/audio/voices")
+    voices.raise_for_status()
+    registered = PRELOAD_VOICE_NAME in voices.json().get("voices", [])
+    if not registered:
+        response = await app.state.client.post(
+            f"{BACKEND_HTTP}/v1/audio/voices",
+            data={
+                "consent": PRELOAD_VOICE_CONSENT,
+                "name": PRELOAD_VOICE_NAME,
+                "speaker_description": "Aura multilingual reference voice",
+            },
+            files={
+                "audio_sample": (
+                    PRELOAD_VOICE_REFERENCE.name,
+                    PRELOAD_VOICE_REFERENCE.read_bytes(),
+                    "audio/wav",
+                )
+            },
+        )
+        response.raise_for_status()
+
+    warmup_payload = {
+        "model": os.getenv("MODEL", "Qwen/Qwen3-TTS-12Hz-1.7B-Base"),
+        "input": "Aura is ready.",
+        "voice": PRELOAD_VOICE_NAME,
+        "response_format": "pcm",
+        "task_type": "Base",
+        "language": "English",
+        "stream": True,
+        "stream_format": "audio",
+        "initial_codec_chunk_frames": INITIAL_CODEC_CHUNK_FRAMES,
+    }
+    async with app.state.client.stream(
+        "POST", f"{BACKEND_HTTP}/v1/audio/speech", json=warmup_payload
+    ) as response:
+        response.raise_for_status()
+        async for _ in response.aiter_raw():
+            pass
+
+    result = {
+        "voice": PRELOAD_VOICE_NAME,
+        "registered": True,
+        "warm": True,
+        "seconds": round(time.monotonic() - started, 3),
+    }
+    print(f"AURA_VOICE_READY {json.dumps(result)}", flush=True)
+    return result
 
 
 def selftest_payload(language: str, text: str, reference_audio: str) -> dict[str, object]:
@@ -237,12 +302,32 @@ async def readiness_payload(request: Request) -> tuple[bool, dict[str, object]]:
     except httpx.HTTPError:
         is_ready = False
 
+    voice_ready = not PRELOAD_VOICE
+    voice_error: str | None = None
+    if is_ready and PRELOAD_VOICE:
+        if request.app.state.voice_preload_task is None:
+            request.app.state.voice_preload_task = asyncio.create_task(
+                preload_voice_and_warm(request.app)
+            )
+        voice_task = request.app.state.voice_preload_task
+        if voice_task.done():
+            try:
+                voice_task.result()
+                voice_ready = True
+            except Exception as error:
+                voice_error = f"{type(error).__name__}: {error}"
+                request.app.state.voice_preload_task = None
+        is_ready = voice_ready
+
     if is_ready and MODEL_READY_AFTER_SECONDS is None:
         MODEL_READY_AFTER_SECONDS = uptime
 
     return is_ready, {
         "status": "healthy" if is_ready else "starting",
         "ready": is_ready,
+        "voice_ready": voice_ready,
+        "voice": PRELOAD_VOICE_NAME if PRELOAD_VOICE else None,
+        "voice_preload_error": voice_error,
         "gateway_started_at": STARTED_AT,
         "gateway_uptime_seconds": round(uptime, 3),
         "model_ready_after_seconds": (
@@ -269,6 +354,18 @@ async def ready(request: Request) -> Response:
 
 def filtered_headers(headers: httpx.Headers) -> dict[str, str]:
     return {key: value for key, value in headers.items() if key.lower() not in HOP_BY_HOP}
+
+
+def optimize_session_config(message: str) -> str:
+    """Force the low-TTFA first chunk unless the caller chose another value."""
+    try:
+        payload = json.loads(message)
+    except (TypeError, json.JSONDecodeError):
+        return message
+    if payload.get("type") != "session.config" or "initial_codec_chunk_frames" in payload:
+        return message
+    payload["initial_codec_chunk_frames"] = INITIAL_CODEC_CHUNK_FRAMES
+    return json.dumps(payload, separators=(",", ":"))
 
 
 @app.api_route(
@@ -300,14 +397,16 @@ async def proxy_websocket(path: str, client_ws: WebSocket) -> None:
 
     await client_ws.accept()
     try:
-        async with websockets.connect(f"{BACKEND_WS}/{path}", max_size=None) as backend_ws:
+        async with websockets.connect(
+            f"{BACKEND_WS}/{path}", max_size=None, compression=None
+        ) as backend_ws:
             async def client_to_backend() -> None:
                 while True:
                     message = await client_ws.receive()
                     if message["type"] == "websocket.disconnect":
                         return
                     if message.get("text") is not None:
-                        await backend_ws.send(message["text"])
+                        await backend_ws.send(optimize_session_config(message["text"]))
                     elif message.get("bytes") is not None:
                         await backend_ws.send(message["bytes"])
 
