@@ -291,13 +291,13 @@ async def run_selftest_when_ready(app: FastAPI) -> None:
         print(f"AURA_SELFTEST_FATAL {type(error).__name__}: {error}", flush=True)
 
 
-async def readiness_payload(request: Request) -> tuple[bool, dict[str, object]]:
+async def service_readiness(app: FastAPI) -> tuple[bool, dict[str, object]]:
     """Return backend readiness plus boot timing measured inside the container."""
     global MODEL_READY_AFTER_SECONDS
 
     uptime = time.monotonic() - STARTED_MONOTONIC
     try:
-        result = await request.app.state.client.get(f"{BACKEND_HTTP}/health", timeout=1.0)
+        result = await app.state.client.get(f"{BACKEND_HTTP}/health", timeout=1.0)
         is_ready = result.status_code == 200
     except httpx.HTTPError:
         is_ready = False
@@ -305,18 +305,16 @@ async def readiness_payload(request: Request) -> tuple[bool, dict[str, object]]:
     voice_ready = not PRELOAD_VOICE
     voice_error: str | None = None
     if is_ready and PRELOAD_VOICE:
-        if request.app.state.voice_preload_task is None:
-            request.app.state.voice_preload_task = asyncio.create_task(
-                preload_voice_and_warm(request.app)
-            )
-        voice_task = request.app.state.voice_preload_task
+        if app.state.voice_preload_task is None:
+            app.state.voice_preload_task = asyncio.create_task(preload_voice_and_warm(app))
+        voice_task = app.state.voice_preload_task
         if voice_task.done():
             try:
                 voice_task.result()
                 voice_ready = True
             except Exception as error:
                 voice_error = f"{type(error).__name__}: {error}"
-                request.app.state.voice_preload_task = None
+                app.state.voice_preload_task = None
         is_ready = voice_ready
 
     if is_ready and MODEL_READY_AFTER_SECONDS is None:
@@ -336,13 +334,26 @@ async def readiness_payload(request: Request) -> tuple[bool, dict[str, object]]:
     }
 
 
+async def readiness_payload(request: Request) -> tuple[bool, dict[str, object]]:
+    return await service_readiness(request.app)
+
+
+async def wait_for_service(app: FastAPI, timeout_seconds: float = 330.0) -> None:
+    """Hold a cold public request until the model and preloaded voice are usable."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        is_ready, _ = await service_readiness(app)
+        if is_ready:
+            return
+        await asyncio.sleep(0.25)
+    raise TimeoutError("Aura model did not become ready within 330 seconds")
+
+
 @app.get("/ping")
 async def ping(request: Request) -> Response:
-    """RunPod probe: 204 means initializing; 200 means inference is ready."""
-    is_ready, payload = await readiness_payload(request)
-    if is_ready:
-        return JSONResponse(payload)
-    return Response(status_code=204)
+    """RunPod liveness probe; readiness is reported in the JSON body."""
+    _, payload = await readiness_payload(request)
+    return JSONResponse(payload)
 
 
 @app.get("/ready")
@@ -373,6 +384,10 @@ def optimize_session_config(message: str) -> str:
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
 )
 async def proxy_http(path: str, request: Request) -> Response:
+    try:
+        await wait_for_service(request.app)
+    except TimeoutError as error:
+        return JSONResponse({"error": str(error)}, status_code=503)
     client: httpx.AsyncClient = request.app.state.client
     upstream = client.build_request(
         request.method,
@@ -397,6 +412,7 @@ async def proxy_websocket(path: str, client_ws: WebSocket) -> None:
 
     await client_ws.accept()
     try:
+        await wait_for_service(client_ws.app)
         async with websockets.connect(
             f"{BACKEND_WS}/{path}", max_size=None, compression=None
         ) as backend_ws:
