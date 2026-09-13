@@ -22,7 +22,11 @@ function loadEnv(file) {
 const localEnv = loadEnv(path.join(workspaceRoot, ".env"));
 const endpointId = process.env.RUNPOD_TTS_ENDPOINT_ID || "vllm-7lg4mza88egpuc";
 const apiBase = process.env.RUNPOD_TTS_BASE_URL || `https://${endpointId}.api.runpod.ai`;
-const apiKey = process.env.RUNPOD_QWEN_TTS_KEY || process.env.RUNPOD_API_KEY || localEnv.RUNPOD_QWEN_TTS_KEY;
+const apiKey =
+  process.env.RUNPOD_QWEN_TTS_KEY ||
+  process.env.RUNPOD_API_KEY ||
+  localEnv.RUNPOD_API_KEY ||
+  localEnv.RUNPOD_QWEN_TTS_KEY;
 const model = process.env.QWEN_TTS_MODEL || "Qwen/Qwen3-TTS-12Hz-1.7B-Base";
 const referencePath =
   process.env.QWEN_TTS_REFERENCE ||
